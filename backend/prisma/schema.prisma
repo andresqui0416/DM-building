@@ -1,0 +1,400 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model chat_messages {
+  id            String               @id
+  session_id    String
+  sender_id     String
+  content       String
+  attachments   String?              @db.LongText
+  source        chat_messages_source @default(Human)
+  is_read       Boolean              @default(false)
+  read_at       DateTime?
+  created_at    DateTime             @default(now())
+  users         users                @relation(fields: [sender_id], references: [id])
+  chat_sessions chat_sessions        @relation(fields: [session_id], references: [id], onDelete: Cascade)
+
+  @@index([sender_id])
+  @@index([session_id, created_at])
+}
+
+model chat_sessions {
+  id                                  String               @id
+  mode                                chat_sessions_mode
+  user_id                             String
+  agent_id                            String?
+  consultation_id                     String?              @unique
+  status                              chat_sessions_status @default(open)
+  chat_type                           String
+  last_activity_at                    DateTime             @default(now())
+  rating                              Int?
+  notes                               String?
+  close_reason                        String?
+  created_at                          DateTime             @default(now())
+  closed_at                           DateTime?
+  chat_messages                       chat_messages[]
+  users_chat_sessions_agent_idTousers users?               @relation("chat_sessions_agent_idTousers", fields: [agent_id], references: [id])
+  consultations                       consultations?       @relation(fields: [consultation_id], references: [id])
+  users_chat_sessions_user_idTousers  users                @relation("chat_sessions_user_idTousers", fields: [user_id], references: [id])
+
+  @@index([agent_id, status])
+  @@index([created_at])
+  @@index([status, last_activity_at])
+  @@index([user_id, status])
+}
+
+model consultations {
+  id              String                       @id
+  user_id         String
+  expert_id       String
+  topic           String
+  price           Decimal                      @db.Decimal(10, 2)
+  meeting_time    DateTime
+  duration        Int
+  payment_status  consultations_payment_status @default(pending)
+  meeting_link    String?
+  status          consultations_status         @default(scheduled)
+  rating_user     Int?
+  rating_expert   Int?
+  feedback_user   String?
+  feedback_expert String?
+  created_at      DateTime                     @default(now())
+  updated_at      DateTime
+  chat_sessions   chat_sessions?
+  experts         experts                      @relation(fields: [expert_id], references: [id])
+  users           users                        @relation(fields: [user_id], references: [id])
+  payments        payments?
+
+  @@index([expert_id])
+  @@index([meeting_time])
+  @@index([status])
+  @@index([user_id])
+}
+
+model expert_schedules {
+  id          String  @id
+  expert_id   String
+  day_of_week Int
+  start_time  String
+  end_time    String
+  timezone    String  @default("UTC")
+  experts     experts @relation(fields: [expert_id], references: [id], onDelete: Cascade)
+
+  @@index([expert_id])
+}
+
+model experts {
+  id               String             @id
+  user_id          String             @unique
+  specialization   String
+  rate_per_hour    Decimal            @db.Decimal(10, 2)
+  bio              String?
+  rating_avg       Float              @default(0)
+  rating_count     Int                @default(0)
+  is_active        Boolean            @default(true)
+  is_verified      Boolean            @default(false)
+  created_at       DateTime           @default(now())
+  updated_at       DateTime
+  consultations    consultations[]
+  expert_schedules expert_schedules[]
+  users            users              @relation(fields: [user_id], references: [id])
+
+  @@index([is_active])
+  @@index([specialization])
+}
+
+model MaterialCategory {
+  id          String             @id @default(uuid())
+  name        String
+  slug        String             @unique
+  parentId    String?            @map("parent_id")
+  sortOrder   Int                @default(0) @map("sort_order")
+  isActive    Boolean            @default(true) @map("is_active")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+
+  // Self-relation for hierarchy
+  parent      MaterialCategory?  @relation("CategoryChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children    MaterialCategory[] @relation("CategoryChildren")
+
+  // Relations
+  materials   Material[]
+
+  @@map("material_categories")
+  @@index([parentId])
+  @@index([isActive])
+}
+
+model Material {
+  id          String   @id @default(uuid())
+  name        String
+  categoryId  String   @map("category_id")
+  unit        String   @map("unit")
+  unitCost    Decimal  @map("unit_cost") @db.Decimal(10, 2)
+  textureUrl  String?  @map("texture_url")
+  modelUrl    String?  @map("model_url")
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  category            MaterialCategory  @relation(fields: [categoryId], references: [id])
+  quotationMaterials  QuotationMaterial[]
+
+  @@map("materials")
+  @@index([categoryId])
+  @@index([isActive])
+}
+
+model notifications {
+  id         String    @id
+  user_id    String
+  type       String
+  title      String
+  message    String
+  link       String?
+  is_read    Boolean   @default(false)
+  read_at    DateTime?
+  created_at DateTime  @default(now())
+  users      users     @relation(fields: [user_id], references: [id])
+
+  @@index([created_at])
+  @@index([user_id, is_read])
+}
+
+model order_updates {
+  id          String   @id
+  order_id    String
+  title       String
+  description String?
+  images      String?  @db.LongText
+  created_at  DateTime @default(now())
+  orders      orders   @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@index([order_id])
+}
+
+model orders {
+  id                          String          @id
+  user_id                     String
+  project_id                  String
+  quotation_id                String?         @unique
+  cm_id                       String
+  total_price                 Decimal         @db.Decimal(10, 2)
+  duration_days               Int
+  status                      orders_status   @default(draft)
+  start_date                  DateTime?
+  end_date                    DateTime?
+  notes                       String?
+  created_at                  DateTime        @default(now())
+  updated_at                  DateTime
+  order_updates               order_updates[]
+  users_orders_cm_idTousers   users           @relation("orders_cm_idTousers", fields: [cm_id], references: [id])
+  projects                    projects        @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  quotation                   Quotation?     @relation(fields: [quotation_id], references: [id])
+  users_orders_user_idTousers users           @relation("orders_user_idTousers", fields: [user_id], references: [id])
+  payments                    payments[]
+
+  @@index([cm_id])
+  @@index([created_at])
+  @@index([project_id], map: "orders_project_id_fkey")
+  @@index([status])
+  @@index([user_id])
+}
+
+model payments {
+  id                       String          @id
+  order_id                 String?
+  consultation_id          String?         @unique
+  amount                   Decimal         @db.Decimal(10, 2)
+  currency                 String          @default("USD")
+  status                   payments_status @default(pending)
+  provider                 String          @default("stripe")
+  stripe_payment_intent_id String?
+  stripe_charge_id         String?
+  refund_amount            Decimal?        @db.Decimal(10, 2)
+  receipt_url              String?
+  created_at               DateTime        @default(now())
+  updated_at               DateTime
+  consultations            consultations?  @relation(fields: [consultation_id], references: [id])
+  orders                   orders?         @relation(fields: [order_id], references: [id])
+
+  @@index([order_id])
+  @@index([status])
+  @@index([stripe_payment_intent_id])
+}
+
+model project_shares {
+  id          String    @id
+  project_id  String
+  shared_with String?
+  share_token String    @unique
+  is_public   Boolean   @default(false)
+  created_at  DateTime  @default(now())
+  expires_at  DateTime?
+  projects    projects  @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@index([project_id])
+  @@index([share_token])
+}
+
+model projects {
+  id             String           @id
+  user_id        String
+  name           String
+  structure_json String           @db.LongText
+  estimated_cost Decimal?         @db.Decimal(10, 2)
+  thumbnail_url  String?
+  version        Int              @default(1)
+  created_at     DateTime         @default(now())
+  updated_at     DateTime
+  deleted_at     DateTime?
+  orders         orders[]
+  project_shares project_shares[]
+  users          users            @relation(fields: [user_id], references: [id])
+  quotations     Quotation[]
+
+  @@index([created_at])
+  @@index([user_id])
+}
+
+model QuotationMaterial {
+  id            String     @id @default(uuid())
+  quotationId   String     @map("quotation_id")
+  materialId    String     @map("material_id")
+  quantity      Decimal    @db.Decimal(10, 2)
+  unitPrice     Decimal    @map("unit_price") @db.Decimal(10, 2)
+  totalPrice    Decimal    @map("total_price") @db.Decimal(10, 2)
+  
+  material      Material   @relation(fields: [materialId], references: [id])
+  quotation     Quotation  @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@map("quotation_materials")
+  @@unique([quotationId, materialId])
+  @@index([materialId])
+  @@index([quotationId])
+}
+
+model Quotation {
+  id            String            @id @default(uuid())
+  projectId     String            @map("project_id")
+  cmId          String            @map("cm_id")
+  estimatedPrice Decimal          @map("estimated_price") @db.Decimal(10, 2)
+  durationDays Int               @map("duration_days")
+  status        quotations_status @default(draft)
+  notes         String?
+  expiresAt     DateTime?         @map("expires_at")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  project       projects          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cm            users             @relation("CMQuotations", fields: [cmId], references: [id])
+  order         orders?
+  materials     QuotationMaterial[]
+
+  @@map("quotations")
+  @@index([projectId])
+  @@index([cmId])
+  @@index([status])
+}
+
+model system_settings {
+  id         String   @id
+  key        String   @unique
+  value      String
+  type       String
+  updated_at DateTime
+}
+
+model users {
+  id                                          String          @id
+  name                                        String
+  email                                       String          @unique
+  password_hash                               String
+  role                                        users_role      @default(customer)
+  avatar_url                                  String?
+  email_verified                              Boolean         @default(false)
+  created_at                                  DateTime        @default(now())
+  updated_at                                  DateTime
+  deleted_at                                  DateTime?
+  chat_messages                               chat_messages[]
+  chat_sessions_chat_sessions_agent_idTousers chat_sessions[] @relation("chat_sessions_agent_idTousers")
+  chat_sessions_chat_sessions_user_idTousers  chat_sessions[] @relation("chat_sessions_user_idTousers")
+  consultations                               consultations[]
+  experts                                     experts?
+  notifications                               notifications[]
+  orders_orders_cm_idTousers                  orders[]        @relation("orders_cm_idTousers")
+  orders_orders_user_idTousers                orders[]        @relation("orders_user_idTousers")
+  projects                                    projects[]
+  quotations                                  Quotation[] @relation("CMQuotations")
+
+  @@index([email])
+  @@index([role])
+}
+
+enum chat_sessions_mode {
+  support
+  consulting
+}
+
+enum users_role {
+  customer
+  cm_team
+  expert
+  admin
+}
+
+enum chat_messages_source {
+  AI
+  Human
+}
+
+enum chat_sessions_status {
+  open
+  closed
+}
+
+enum payments_status {
+  pending
+  completed
+  failed
+  refunded
+}
+
+enum quotations_status {
+  draft
+  review
+  approved
+  rejected
+}
+
+enum consultations_payment_status {
+  pending
+  completed
+  failed
+  refunded
+}
+
+enum orders_status {
+  draft
+  approved
+  paid
+  in_progress
+  completed
+  cancelled
+}
+
+enum consultations_status {
+  scheduled
+  completed
+  cancelled
+  no_show
+}
