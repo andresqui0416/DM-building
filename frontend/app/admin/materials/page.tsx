@@ -30,7 +30,8 @@ interface MaterialCategory {
 export default function AdminMaterialsPage() {
   const router = useRouter()
   const [materials, setMaterials] = useState<Material[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loadingMaterials, setLoadingMaterials] = useState(true)
+  const [loadingCategories, setLoadingCategories] = useState(true)
   const [error, setError] = useState('')
   const [isMounted, setIsMounted] = useState(false)
   const [paramsReady, setParamsReady] = useState(false)
@@ -153,6 +154,7 @@ export default function AdminMaterialsPage() {
   }, [searchInput, isMounted, searchQuery]) // Include searchQuery to avoid stale closure
 
 
+  // Fetch categories once on mount
   useEffect(() => {
     // Check auth
     const token = localStorage.getItem('token')
@@ -162,15 +164,58 @@ export default function AdminMaterialsPage() {
       return
     }
 
+    fetchCategories()
+  }, [router])
+
+  // Fetch materials when filters change
+  useEffect(() => {
+    // Check auth
+    const token = localStorage.getItem('token')
+    if (!token) {
+      return
+    }
+
     // Only fetch after initial params have been applied
     if (paramsReady) {
       fetchMaterials()
     }
   }, [router, page, limit, categoryFilter, activeFilter, searchQuery, paramsReady])
 
+  const fetchCategories = async () => {
+    try {
+      setLoadingCategories(true)
+      const data = await apiRequest<{
+        success: boolean
+        data: {
+          list: MaterialCategory[]
+          tree: any[]
+        }
+      }>('/api/admin/categories')
+
+      if (data.success && data.data) {
+        setCategories(data.data.list || [])
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to load categories')
+      // If it's an auth error, apiRequest will handle redirect
+    } finally {
+      setLoadingCategories(false)
+    }
+  }
+
+  // Auto-expand categories that have selected filter
+  useEffect(() => {
+    if (categoryFilter && categories.length > 0) {
+      const selectedCategory = categories.find(c => c.id === categoryFilter)
+      if (selectedCategory?.parentId) {
+        setExpandedCategories(prev => new Set([...prev, selectedCategory.parentId!]))
+      }
+    }
+  }, [categoryFilter, categories])
+
   const fetchMaterials = async () => {
     try {
-      setLoading(true)
+      setLoadingMaterials(true)
       const params = new URLSearchParams({
         page: page.toString(),
         limit: limit.toString()
@@ -182,7 +227,6 @@ export default function AdminMaterialsPage() {
       const data = await apiRequest<{
         success: boolean
         data: Material[]
-        categories: MaterialCategory[]
         pagination: {
           total: number
           totalPages: number
@@ -195,20 +239,12 @@ export default function AdminMaterialsPage() {
         if (data.pagination) {
           setPagination(data.pagination)
         }
-        setCategories(data.categories || [])
-        // Auto-expand categories that have selected filter
-        if (categoryFilter) {
-          const selectedCategory = data.categories?.find(c => c.id === categoryFilter)
-          if (selectedCategory?.parentId) {
-            setExpandedCategories(prev => new Set([...prev, selectedCategory.parentId!]))
-          }
-        }
       }
     } catch (err: any) {
       setError(err.message || 'An error occurred')
       // If it's an auth error, apiRequest will handle redirect
     } finally {
-      setLoading(false)
+      setLoadingMaterials(false)
     }
   }
 
@@ -239,10 +275,10 @@ export default function AdminMaterialsPage() {
   }
 
   // Don't render until mounted to avoid hydration mismatch
-  if (!isMounted || loading) {
+  if (!isMounted) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">Loading materials...</div>
+        <div className="text-gray-500">Loading...</div>
       </div>
     )
   }
@@ -286,13 +322,19 @@ export default function AdminMaterialsPage() {
     // URL will be updated by useEffect
   }
 
+  const isLoading = loadingCategories || loadingMaterials
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-semibold">Materials Management</h1>
         <button
-          onClick={fetchMaterials}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          onClick={() => {
+            fetchCategories()
+            fetchMaterials()
+          }}
+          disabled={isLoading}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Refresh
         </button>
@@ -302,14 +344,16 @@ export default function AdminMaterialsPage() {
       <div className="border-b border-gray-200">
         <nav className="flex gap-6" aria-label="Tabs">
           <button
-            className={`py-2 text-sm ${activeTab === 'materials' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'}`}
+            className={`py-2 text-sm ${activeTab === 'materials' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'} disabled:opacity-50 disabled:cursor-not-allowed`}
             onClick={() => setActiveTab('materials')}
+            disabled={isLoading}
           >
             Materials
           </button>
           <button
-            className={`py-2 text-sm ${activeTab === 'categories' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'}`}
+            className={`py-2 text-sm ${activeTab === 'categories' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'} disabled:opacity-50 disabled:cursor-not-allowed`}
             onClick={() => setActiveTab('categories')}
+            disabled={isLoading}
           >
             Categories
           </button>
@@ -327,15 +371,21 @@ export default function AdminMaterialsPage() {
             </div>
           </div>
           <div className="p-2 max-h-[calc(100vh-12rem)] overflow-y-auto">
-            <ul className="space-y-1">
+            {loadingCategories ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="text-gray-500 text-sm">Loading categories...</div>
+              </div>
+            ) : (
+              <ul className="space-y-1">
               <li>
                 <button
                   className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg transition-all duration-200 ${
                     categoryFilter === ''
                       ? 'bg-blue-600 text-white shadow-md'
                       : 'text-gray-700 hover:bg-gray-100 hover:text-blue-600'
-                  }`}
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
                   onClick={() => updateCategoryFilter('')}
+                  disabled={isLoading}
                 >
                   <Box className="w-4 h-4 flex-shrink-0" />
                   <span className="font-medium text-sm">All Materials</span>
@@ -355,8 +405,9 @@ export default function AdminMaterialsPage() {
                         {hasSubcategories && (
                           <button
                             onClick={() => toggleCategory(root.id)}
-                            className="p-1 hover:bg-gray-100 rounded transition-colors"
+                            className="p-1 hover:bg-gray-100 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                            disabled={isLoading}
                           >
                             {isExpanded ? (
                               <ChevronDown className="w-4 h-4 text-gray-500" />
@@ -371,8 +422,9 @@ export default function AdminMaterialsPage() {
                             isSelected
                               ? 'bg-blue-600 text-white shadow-md'
                               : 'text-gray-700 hover:bg-gray-100 hover:text-blue-600'
-                          }`}
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
                           onClick={() => updateCategoryFilter(root.id)}
+                          disabled={isLoading}
                         >
                           {isExpanded || !hasSubcategories ? (
                             <FolderOpen className="w-4 h-4 flex-shrink-0" />
@@ -402,8 +454,9 @@ export default function AdminMaterialsPage() {
                                       isChildSelected
                                         ? 'bg-blue-600 text-white shadow-md'
                                         : 'text-gray-600 hover:bg-gray-100 hover:text-blue-600'
-                                    }`}
+                                    } disabled:opacity-50 disabled:cursor-not-allowed`}
                                     onClick={() => updateCategoryFilter(child.id)}
+                                    disabled={isLoading}
                                   >
                                     <Tag className="w-3.5 h-3.5 flex-shrink-0" />
                                     <span className="font-medium text-sm">{child.name}</span>
@@ -416,7 +469,8 @@ export default function AdminMaterialsPage() {
                     </li>
                   )
                 })}
-            </ul>
+              </ul>
+            )}
           </div>
         </aside>
 
@@ -437,20 +491,22 @@ export default function AdminMaterialsPage() {
                         value={searchInput}
                         onChange={(e) => setSearchInput(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
+                          if (e.key === 'Enter' && !isLoading) {
                             setSearchQuery(searchInput)
                             setPage(1)
                           }
                         }}
                         placeholder="Search materials by name or description..."
-                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        disabled={isLoading}
+                        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                       />
                       <button
                         onClick={() => {
                           setSearchQuery(searchInput)
                           setPage(1)
                         }}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
+                        disabled={isLoading}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Search
                       </button>
@@ -464,7 +520,8 @@ export default function AdminMaterialsPage() {
                       id="active"
                       value={activeFilter}
                       onChange={(e) => updateActiveFilter(e.target.value)}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={isLoading}
+                      className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                     >
                       <option value="">All</option>
                       <option value="true">Active</option>
@@ -479,7 +536,8 @@ export default function AdminMaterialsPage() {
                       id="limit"
                       value={limit}
                       onChange={(e) => handleLimitChange(Number(e.target.value))}
-                      className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      disabled={isLoading}
+                      className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                     >
                       <option value={25}>25</option>
                       <option value={40}>40</option>
@@ -488,7 +546,8 @@ export default function AdminMaterialsPage() {
                   </div>
                   <button
                     onClick={() => setShowAddModal(true)}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 whitespace-nowrap"
+                    disabled={isLoading}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Add Material
                   </button>
@@ -497,42 +556,47 @@ export default function AdminMaterialsPage() {
 
               {/* Materials table */}
               <div className="bg-white border rounded-lg overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Material
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Unit Cost
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Unit
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Description
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Status
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Created
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {materials.length === 0 ? (
+                {loadingMaterials ? (
+                  <div className="flex items-center justify-center py-12">
+                    <div className="text-gray-500">Loading materials...</div>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
                         <tr>
-                          <td colSpan={6} className="px-6 py-4 text-center text-gray-500">
-                            No materials found
-                          </td>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Material
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Unit Cost
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Unit
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Description
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Status
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Created
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Actions
+                          </th>
                         </tr>
-                      ) : (
-                        materials.map((material) => (
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {materials.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-6 py-4 text-center text-gray-500">
+                              No materials found
+                            </td>
+                          </tr>
+                        ) : (
+                          materials.map((material) => (
                           <tr key={material.id} className="hover:bg-gray-50">
                             <td className="px-6 py-4 whitespace-nowrap">
                               <div className="text-sm font-medium text-gray-900">{material.name}</div>
@@ -570,26 +634,29 @@ export default function AdminMaterialsPage() {
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => setEditingMaterial(material)}
-                                  className="text-blue-600 hover:text-blue-900"
+                                  disabled={isLoading}
+                                  className="text-blue-600 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                   Edit
                                 </button>
                                 {material.isActive && (
                                   <button
                                     onClick={() => handleDelete(material.id)}
-                                    className="text-red-600 hover:text-red-900"
+                                    disabled={isLoading}
+                                    className="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
                                     Deactivate
                                   </button>
                                 )}
                               </div>
                             </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* Pagination */}
@@ -600,7 +667,7 @@ export default function AdminMaterialsPage() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => updatePage(Math.max(1, page - 1))}
-                    disabled={page === 1}
+                    disabled={page === 1 || isLoading}
                     className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Previous
@@ -621,11 +688,12 @@ export default function AdminMaterialsPage() {
                         <button
                           key={pageNum}
                           onClick={() => updatePage(pageNum)}
+                          disabled={isLoading}
                           className={`px-3 py-2 border rounded-md text-sm font-medium ${
                             page === pageNum
                               ? 'bg-blue-600 text-white border-blue-600'
                               : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                          }`}
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
                           {pageNum}
                         </button>
@@ -634,7 +702,7 @@ export default function AdminMaterialsPage() {
                   </div>
                   <button
                     onClick={() => updatePage(Math.min(pagination.totalPages, page + 1))}
-                    disabled={page === pagination.totalPages}
+                    disabled={page === pagination.totalPages || isLoading}
                     className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     Next
@@ -673,7 +741,8 @@ export default function AdminMaterialsPage() {
                   setShowAddModal(false)
                   setEditingMaterial(null)
                 }}
-                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                disabled={isLoading}
+                className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
